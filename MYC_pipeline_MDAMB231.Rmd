@@ -1,0 +1,265 @@
+---
+title: "Transcriptomic Analysis of MYC Target Genes as a Proxy for MYC Transcriptional Activity"
+subtitle: "Supplementary R Markdown — worked RNA-seq example (MDA-MB-231, GSE309250)"
+author: "M. Arnal Segura (Peptomyc S.L., Barcelona, Spain)"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo     = TRUE,
+  message  = FALSE,
+  warning  = FALSE,
+  fig.width  = 7,
+  fig.height = 5
+)
+```
+
+# Description
+
+This R Markdown document is supplementary material for the book chapter:
+
+> Arnal Segura M. *Transcriptomic Analysis of MYC Target Genes as a Proxy for MYC Transcriptional Activity*. In: **The MYC Gene: Methods and Protocols** (3rd ed.).
+
+It reproduces the bulk RNA-seq branch of the workflow described in the chapter and applies it to the public GEO series **GSE309250** (MDA-MB-231 breast cancer cells treated with 30 µM Omomyc — referred to as `DP30` in the sample names — or vehicle for 120 h, two biological replicates per condition). The pipeline implements:
+
+1. Pre-processing and TMM normalization of the count matrix with `edgeR`.
+2. Differential expression (DE) analysis with `limma` + `voom`.
+3. MYC transcriptional activity inference using three complementary approaches:
+   * Gene Set Enrichment Analysis (GSEA) on the DE-derived ranked list (`clusterProfiler`).
+   * Gene Set Variation Analysis (GSVA) on the log~2~-CPM matrix (`GSVA`).
+   * Univariate Linear Model (ULM) transcription-factor activity inference with the CollecTRI regulon (`decoupleR`).
+
+The R session that produced and tested this document is recorded in the *Session information* section at the end of the document.
+
+# Software requirements
+
+The pipeline was developed and tested under R 4.4.2. The Bioconductor / CRAN packages required to run the document are:
+
+```{r load-libraries}
+library(data.table)            # Fast import of the table of counts
+library(dplyr)                 # Pipe operator (%>%) and tidy data manipulation
+library(edgeR)                 # TMM normalization of RNA-seq counts
+library(limma)                 # DE analysis with voom + lmFit + eBayes
+library(msigdbr)               # Access to MSigDB gene set collections
+library(clusterProfiler)       # Gene Set Enrichment Analysis (GSEA)
+library(enrichplot)            # dotplot() for gseaResult objects
+library(GSEABase)              # GeneSet / GeneSetCollection containers
+library(GSVA)                  # Gene Set Variation Analysis (GSVA)
+library(SummarizedExperiment)  # Extract assay() from the GSVA result
+library(ComplexHeatmap)        # Heatmap visualization
+library(grid)                  # gpar() for heatmap graphical parameters
+library(fastcluster)           # Fast hierarchical clustering
+library(decoupleR)             # CollecTRI regulon retrieval + run_ulm()
+```
+
+Note that this script was prepared with `msigdbr` v7.5.1. The `msigdbr` API was modified in v9.0.0 (the `category` argument was renamed to `collection`); when using a newer version of `msigdbr` the calls in the *MSigDB MYC-related gene sets* section should be adapted accordingly.
+
+# Import of the table of counts (GEO accession GSE309250)
+
+The table of counts is downloaded from the GEO supplementary FTP. Replace the URL by a local path if the file has been downloaded in advance.
+
+```{r import-counts}
+counts_url <- paste0(
+  "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE309nnn/GSE309250/",
+  "suppl/GSE309250%5Fcounts%2Etxt%2Egz"
+)
+
+dt  <- fread(counts_url)
+mat <- as.matrix(dt, rownames = 1)
+
+# Four samples, two replicates per condition:
+#   * MDAMB231_120h_DP30_B3, MDAMB231_120h_DP30_B4 -> Omomyc (30 uM)
+#   * MDAMB231_120h_veh_B3,  MDAMB231_120h_veh_B4  -> vehicle
+colnames(mat)
+```
+
+# Pre-processing
+
+Low-count genes are removed before normalization to stabilize the mean–variance estimation and to reduce the multiple-testing burden in the downstream DE analysis.
+
+```{r filter-lowcounts}
+dim(mat)  # 26364 genes x 4 samples
+
+# Retain genes with more than 10 counts in all 4 samples
+keep      <- rowSums(mat > 10) >= 4
+counts_f  <- mat[keep, ]
+dim(counts_f)  # 13367 genes x 4 samples
+```
+
+# Normalization: TMM and log~2~-CPM
+
+The Trimmed Mean of M-values (TMM) method implemented in `edgeR` is used to compute per-sample normalization factors. The resulting `DGEList` is reused both to build the log~2~-CPM matrix that feeds GSVA and as the input of `voom()` for the DE analysis, so that the TMM normalization factors are propagated to the linear modelling step.
+
+```{r normalize}
+d <- DGEList(counts = counts_f)
+d <- calcNormFactors(d, method = "TMM")
+
+# log2-CPM expression matrix (prior count stabilizes the variance near zero)
+cpm_matrix <- cpm(d, log = TRUE, prior.count = 1)
+```
+
+# Differential expression analysis (limma + voom)
+
+A no-intercept design is used so that pairwise contrasts can be specified directly between the two groups (Omomyc vs. vehicle).
+
+```{r design-contrast}
+cond <- ifelse(grepl("veh", colnames(counts_f)), "vehicle", "omomyc")
+table(cond)
+
+design <- model.matrix(~ 0 + cond)
+rownames(design) <- colnames(counts_f)
+colnames(design) <- gsub("cond", "", colnames(design))
+
+# Contrast of interest: Omomyc-treated samples versus vehicle-treated samples
+cont_matrix <- makeContrasts(OMOvsVEH = omomyc - vehicle, levels = design)
+```
+
+voom() is called on the matrix of raw counts. Quantile normalization is requested as an optional between-array correction; whether this option is appropriate should be evaluated empirically (the un-normalized voom output should also be inspected).
+
+```{r voom-fit, fig.cap = "voom mean–variance trend after TMM normalization."}
+voom_res <- voom(counts_f, design, plot = TRUE, normalize = "quantile")
+
+fit      <- lmFit(voom_res, design)
+fit_main <- contrasts.fit(fit, cont_matrix)
+fit_main <- eBayes(fit_main)
+
+top_diff <- topTable(fit_main, coef = "OMOvsVEH", number = Inf, adjust.method = "fdr")
+head(top_diff)
+```
+
+# MYC-related gene sets from MSigDB
+
+The Hallmark (`H`) and curated (`C2`) collections are downloaded with `msigdbr` and filtered to keep gene sets whose names contain `MYC_`, `MYCN_`, or `MYCL_`. This selection corresponds to the 51 MYC-related gene sets used in the chapter (Fig. 2).
+
+```{r msigdb}
+H <- msigdbr(species = "Homo sapiens", category = "H")
+H_symbol <- as.data.frame(H %>% dplyr::select(gs_name, gene_symbol))
+H_symbol$collection <- "Hallmark"
+dim(H_symbol)   # 8209 rows x 3 columns
+
+C2 <- msigdbr(species = "Homo sapiens", category = "C2")
+C2_symbol <- as.data.frame(C2 %>% dplyr::select(gs_name, gene_symbol))
+C2_symbol$collection <- "C2"
+dim(C2_symbol)  # ~5.9e5 rows x 3 columns (size depends on the MSigDB version)
+
+# Merge both collections and retain MYC/MYCN/MYCL gene sets
+all_gs  <- rbind(H_symbol, C2_symbol)
+myc_gsc <- all_gs[grepl("MYC_|MYCN_|MYCL_", all_gs$gs_name), ]
+length(unique(myc_gsc$gs_name))  # 51 MYC-related gene sets
+```
+
+# Gene Set Enrichment Analysis (GSEA)
+
+GSEA is applied to a pre-ranked gene list. As described in the chapter (Methods §3.3.3), the ranking metric combines the magnitude and the direction of the change observed in the DE analysis as $-\log_{10}(p) \times \text{sign}(\log_2 \mathrm{FC})$.
+
+```{r gsea}
+signL  <- sign(top_diff$logFC)
+logP   <- -log10(top_diff$P.Value)
+metric <- logP * signL
+names(metric) <- rownames(top_diff)
+metric <- sort(metric, decreasing = TRUE)
+
+# GSEA relies on a random permutation step; the seed is fixed for reproducibility.
+set.seed(2)
+gsea_res <- GSEA(
+  geneList     = metric,
+  TERM2GENE    = myc_gsc[, c("gs_name", "gene_symbol")],
+  verbose      = FALSE,
+  eps          = 0,
+  pvalueCutoff = 0.05
+)
+gsea_tbl <- gsea_res@result
+
+# HALLMARK_MYC_TARGETS_V1 and DANG_MYC_TARGETS_UP are negatively enriched, consistent
+# with MYC inhibition in the Omomyc-vs-vehicle contrast.
+gsea_tbl[, c("NES", "pvalue", "p.adjust")]
+```
+
+```{r gsea-dotplot, fig.cap = "GSEA results for the MYC-related MSigDB gene sets, dots coloured by adjusted p-value and ordered by normalized enrichment score (NES)."}
+dotplot(gsea_res, x = "NES")
+```
+
+# Gene Set Variation Analysis (GSVA)
+
+GSVA produces a sample-wise enrichment score for every gene set, independently of the contrast definition. The MYC-related gene sets are reorganized as a `GeneSetCollection` before running `gsva()`.
+
+```{r build-gsc}
+gene_lists <- split(myc_gsc$gene_symbol, myc_gsc$gs_name)
+
+gsc <- GeneSetCollection(
+  lapply(names(gene_lists), function(name) {
+    GeneSet(
+      unique(as.character(gene_lists[[name]])),
+      setName    = name,
+      geneIdType = SymbolIdentifier()  # change if Entrez or Ensembl identifiers are used
+    )
+  })
+)
+```
+
+```{r gsva-run}
+par_obj  <- gsvaParam(cpm_matrix, gsc, minSize = 5, maxSize = 500)
+gsva_res <- gsva(par_obj)
+
+# Extract the score matrix
+gsva_m=gsva_res[1:nrow(gsva_res),1:ncol(gsva_res)]
+dim(gsva_m)#47  4
+```
+
+```{r gsva-heatmap, fig.cap = "Heatmap of GSVA enrichment scores for MYC-related gene sets. Ward.D2 hierarchical clustering on Euclidean distance is used for both rows and columns."}
+fh <- function(x) fastcluster::hclust(dist(x), method = "ward.D2")
+
+Heatmap(
+  gsva_m,
+  name            = " ",
+  cluster_rows    = fh,
+  cluster_columns = fh,
+  row_names_gp    = gpar(fontsize = 6),
+  column_names_gp = gpar(fontsize = 10)
+)
+# GSVA scores of MYC-related gene sets cleanly separate Omomyc-treated and
+# vehicle-treated samples; HALLMARK_MYC_TARGETS_V1 is among the most discriminant.
+```
+
+# Transcription-factor activity with CollecTRI and ULM
+
+The CollecTRI regulon is retrieved with `decoupleR::get_collectri()`. The chapter applies the Univariate Linear Model (ULM) at the contrast level, using the same $-\log_{10}(p) \times \text{sign}(\log_2 \mathrm{FC})$ gene-level metric that feeds GSEA. The metric is reshaped into a one-column matrix so that the contrast name is preserved in the `condition` column of the `run_ulm()` output.
+
+```{r decoupler}
+net <- get_collectri(organism = "human", split_complexes = FALSE)
+
+# One-column matrix: rows = genes, column = contrast name
+metric_mat <- matrix(
+  metric,
+  ncol     = 1,
+  dimnames = list(names(metric), "OMOvsVEH")
+)
+
+contrast_acts <- run_ulm(
+  mat     = metric_mat,
+  net     = net,
+  .source = "source",
+  .target = "target",
+  .mor    = "mor",
+  minsize = 5
+)
+contrast_acts <- as.data.frame(contrast_acts)
+
+# MYC activity in the Omomyc-vs-vehicle contrast: negative ULM score with a
+# significant p-value, consistent with MYC inhibition.
+contrast_acts[contrast_acts$source == "MYC", ]
+```
+
+# Session information
+
+```{r sessioninfo}
+sessionInfo()
+```

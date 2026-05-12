@@ -34,7 +34,7 @@ It reproduces the bulk RNA-seq branch of the workflow described in the chapter a
 2. Differential expression (DE) analysis with `limma` + `voom`.
 3. MYC transcriptional activity inference using three complementary approaches:
    * Gene Set Enrichment Analysis (GSEA) on the DE-derived ranked list (`clusterProfiler`).
-   * Gene Set Variation Analysis (GSVA) on the log~2~-CPM matrix (`GSVA`).
+   * Gene Set Variation Analysis (GSVA) on the TMM log~2~-CPM normalized matrix (`GSVA`).
    * Univariate Linear Model (ULM) transcription-factor activity inference with the CollecTRI regulon (`decoupleR`).
 
 The R session that produced and tested this document is recorded in the *Session information* section at the end of the document.
@@ -96,7 +96,7 @@ dim(counts_f)  # 13367 genes x 4 samples
 
 # Normalization: TMM and log~2~-CPM
 
-The Trimmed Mean of M-values (TMM) method implemented in `edgeR` is used to compute per-sample normalization factors. The resulting `DGEList` is reused both to build the log~2~-CPM matrix that feeds GSVA and as the input of `voom()` for the DE analysis, so that the TMM normalization factors are propagated to the linear modelling step.
+The Trimmed Mean of M-values (TMM) method implemented in `edgeR` is used to compute per-sample normalization factors. The resulting `DGEList` is reused both to build the log~2~-CPM matrix that feeds GSVA.
 
 ```{r normalize}
 d <- DGEList(counts = counts_f)

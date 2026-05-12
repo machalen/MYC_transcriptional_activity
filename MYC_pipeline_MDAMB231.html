@@ -11,7 +11,7 @@
 
 <meta name="author" content="M. Arnal Segura (Peptomyc S.L., Barcelona, Spain)" />
 
-<meta name="date" content="2026-05-11" />
+<meta name="date" content="2026-05-12" />
 
 <title>Transcriptomic Analysis of MYC Target Genes as a Proxy for MYC Transcriptional Activity</title>
 
@@ -2844,7 +2844,7 @@ as a Proxy for MYC Transcriptional Activity</h1>
 (MDA-MB-231, GSE309250)</h3>
 <h4 class="author">M. Arnal Segura (Peptomyc S.L., Barcelona,
 Spain)</h4>
-<h4 class="date">2026-05-11</h4>
+<h4 class="date">2026-05-12</h4>
 
 </div>
 
@@ -2874,8 +2874,8 @@ approaches:
 <ul>
 <li>Gene Set Enrichment Analysis (GSEA) on the DE-derived ranked list
 (<code>clusterProfiler</code>).</li>
-<li>Gene Set Variation Analysis (GSVA) on the log<sub>2</sub>-CPM matrix
-(<code>GSVA</code>).</li>
+<li>Gene Set Variation Analysis (GSVA) on the TMM log<sub>2</sub>-CPM
+normalized matrix (<code>GSVA</code>).</li>
 <li>Univariate Linear Model (ULM) transcription-factor activity
 inference with the CollecTRI regulon (<code>decoupleR</code>).</li>
 </ul></li>
@@ -2949,9 +2949,7 @@ log<sub>2</sub>-CPM</h1>
 <p>The Trimmed Mean of M-values (TMM) method implemented in
 <code>edgeR</code> is used to compute per-sample normalization factors.
 The resulting <code>DGEList</code> is reused both to build the
-log<sub>2</sub>-CPM matrix that feeds GSVA and as the input of
-<code>voom()</code> for the DE analysis, so that the TMM normalization
-factors are propagated to the linear modelling step.</p>
+log<sub>2</sub>-CPM matrix that feeds GSVA.</p>
 <pre class="r"><code>d &lt;- DGEList(counts = counts_f)
 d &lt;- calcNormFactors(d, method = &quot;TMM&quot;)
 

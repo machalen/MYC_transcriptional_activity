@@ -20,7 +20,7 @@ Both files implement the same pipeline; choose one or the other depending on whe
 3. Differential expression analysis with `limma` + `voom`.
 4. MYC transcriptional activity inferred from three complementary approaches:
    * Gene Set Enrichment Analysis (GSEA) with `clusterProfiler`, using MYC-related gene sets from the MSigDB Hallmark and C2 collections retrieved with `msigdbr`.
-   * Gene Set Variation Analysis (GSVA) with the `GSVA` package on the log<sub>2</sub>-TMM normalized matrix.
+   * Gene Set Variation Analysis (GSVA) with the `GSVA` package on the TMM log<sub>2</sub>-CPM normalized matrix.
    * Transcription-factor activity inference with the Univariate Linear Model (ULM) implemented in `decoupleR`, using the CollecTRI MYC regulon.
 
 ## Software requirements

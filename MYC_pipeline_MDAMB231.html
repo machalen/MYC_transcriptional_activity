@@ -2948,7 +2948,7 @@ dim(counts_f)  # 13367 genes x 4 samples</code></pre>
 log<sub>2</sub>-CPM</h1>
 <p>The Trimmed Mean of M-values (TMM) method implemented in
 <code>edgeR</code> is used to compute per-sample normalization factors.
-The resulting <code>DGEList</code> is reused both to build the
+The resulting <code>DGEList</code> is reused to build the
 log<sub>2</sub>-CPM matrix that feeds GSVA.</p>
 <pre class="r"><code>d &lt;- DGEList(counts = counts_f)
 d &lt;- calcNormFactors(d, method = &quot;TMM&quot;)
